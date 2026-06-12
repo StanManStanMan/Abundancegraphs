@@ -30,6 +30,14 @@ def get_colors(n):
         cmap = matplotlib.cm.get_cmap("tab20")
     return [cmap(i / max(n - 1, 1)) for i in range(n)]
 
+# ── Safe linear regression — skips if all x values are identical ───────────
+def safe_linregress(x, y):
+    """Returns (slope, intercept, r, p) or None if regression is impossible."""
+    if len(x) < 3 or x.nunique() < 2:
+        return None
+    slope, intercept, r, p, _ = stats.linregress(x, y)
+    return slope, intercept, r, p
+
 # ═══════════════════════════════════════════════════════════════════════════
 # PAGE CONFIG
 # ═══════════════════════════════════════════════════════════════════════════
@@ -209,14 +217,16 @@ for taxon in top_taxa:
     sub = agg_top[agg_top[tax_col] == taxon].sort_values("urban_score")
     ax1.scatter(sub["urban_score"], sub["rel_abund"],
                 color=color_map[taxon], alpha=0.5, s=40)
-    if len(sub) >= 3:
-        slope, intercept, r, p, se = stats.linregress(
-            sub["urban_score"], sub["rel_abund"]
-        )
+    result = safe_linregress(sub["urban_score"], sub["rel_abund"])
+    if result:
+        slope, intercept, r, p = result
         x_line = np.linspace(sub["urban_score"].min(), sub["urban_score"].max(), 100)
         ax1.plot(x_line, slope * x_line + intercept,
                  color=color_map[taxon], linewidth=1.8,
                  label=f"{taxon} (r={r:.2f}, p={p:.3f})")
+    else:
+        ax1.scatter([], [], color=color_map[taxon],
+                    label=f"{taxon} (insufficient range)")
 
 ax1.set_xlabel("Urban Score", fontsize=12)
 ax1.set_ylabel("Relative Abundance", fontsize=12)
@@ -252,15 +262,17 @@ if sample_type == "Both":
             sub = agg_s_top[agg_s_top[tax_col] == taxon].sort_values("urban_score")
             ax.scatter(sub["urban_score"], sub["rel_abund"],
                        color=color_map_s[taxon], alpha=0.5, s=40)
-            if len(sub) >= 3:
-                slope, intercept, r, p, se = stats.linregress(
-                    sub["urban_score"], sub["rel_abund"]
-                )
+            result = safe_linregress(sub["urban_score"], sub["rel_abund"])
+            if result:
+                slope, intercept, r, p = result
                 x_line = np.linspace(sub["urban_score"].min(),
                                      sub["urban_score"].max(), 100)
                 ax.plot(x_line, slope * x_line + intercept,
                         color=color_map_s[taxon], linewidth=1.8,
                         label=f"{taxon} (r={r:.2f}, p={p:.3f})")
+            else:
+                ax.scatter([], [], color=color_map_s[taxon],
+                           label=f"{taxon} (insufficient range)")
 
         ax.set_title(f"{stype} samples", fontsize=13)
         ax.set_xlabel("Urban Score", fontsize=11)

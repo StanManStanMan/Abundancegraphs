@@ -8,7 +8,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
+import matplotlib.colormaps as colormaps
 from scipy import stats
 from scipy.spatial.distance import braycurtis
 from scipy.stats import spearmanr
@@ -60,6 +60,11 @@ TAX_OPTIONS = {
     "Phylum":   "tax_phylum",
     "Kingdom":  "tax_kingdom",
 }
+
+def get_colors(n):
+    """Return n distinct colours from tab20, safe for all matplotlib versions."""
+    cmap = colormaps["tab20"]
+    return [cmap(i / max(n - 1, 1)) for i in range(n)]
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SIDEBAR — CONTROLS
@@ -123,20 +128,12 @@ def filter_sample_type(df, stype):
     return df[df[SITE_COL].str.contains(stype)]
 
 def prepare_agg(df_in, tax_col, combine_sites, combine_method):
-    """
-    Returns agg DataFrame with columns:
-      [site_id, tax_col, reads, urban_score, rel_abund]
-    """
     df = df_in.copy()
     df = df.dropna(subset=[URBAN_COL, tax_col])
     df[tax_col] = df[tax_col].astype(str).str.strip()
 
-    if combine_sites:
-        group_col = "site_base"
-    else:
-        group_col = SITE_COL
+    group_col = "site_base" if combine_sites else SITE_COL
 
-    # Urban score per site (mean across replicates if combined)
     site_urban = (
         df.groupby(group_col)[URBAN_COL]
         .mean()
@@ -157,7 +154,6 @@ def prepare_agg(df_in, tax_col, combine_sites, combine_method):
         )
 
     elif combine_sites and combine_method == "Average relative abundance":
-        # Compute rel abund per original site first, then average
         df["rel_abund_orig"] = df.groupby(SITE_COL)[READ_COL].transform(
             lambda x: x / x.sum()
         )
@@ -170,7 +166,6 @@ def prepare_agg(df_in, tax_col, combine_sites, combine_method):
         agg = agg.merge(site_urban, on="site_id")
 
     else:
-        # Original sites — no combining
         agg = (
             df.groupby([SITE_COL, tax_col])[READ_COL]
             .sum()
@@ -191,8 +186,8 @@ if min_reads > 0:
 
 agg = prepare_agg(df_filtered, tax_col, combine_sites, combine_method)
 
-# ── Site label for display ─────────────────────────────────────────────────
 site_label_name = "Combined site" if combine_sites else "Site"
+mode_str = f"combined {combine_method.lower()}" if combine_sites else "original sites"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 1 — MOST ABUNDANT TAXA OVER URBAN SCORE
@@ -200,36 +195,30 @@ site_label_name = "Combined site" if combine_sites else "Site"
 st.header(f"1 · Top {top_n} {tax_label}s vs. Urban Score")
 
 top_taxa = (
-    agg.groupby(tax_col)["reads"]
-    .sum()
-    .nlargest(top_n)
-    .index.tolist()
+    agg.groupby(tax_col)["reads"].sum().nlargest(top_n).index.tolist()
 )
 agg_top = agg[agg[tax_col].isin(top_taxa)].copy()
-
-cmap = cm.get_cmap("tab20", len(top_taxa))
-colors = {t: cmap(i) for i, t in enumerate(top_taxa)}
+colors = get_colors(len(top_taxa))
+color_map = dict(zip(top_taxa, colors))
 
 fig1, ax1 = plt.subplots(figsize=(10, 5))
 for taxon in top_taxa:
     sub = agg_top[agg_top[tax_col] == taxon].sort_values("urban_score")
     ax1.scatter(sub["urban_score"], sub["rel_abund"],
-                color=colors[taxon], alpha=0.5, s=40)
+                color=color_map[taxon], alpha=0.5, s=40)
     if len(sub) >= 3:
         slope, intercept, r, p, se = stats.linregress(
             sub["urban_score"], sub["rel_abund"]
         )
         x_line = np.linspace(sub["urban_score"].min(), sub["urban_score"].max(), 100)
         ax1.plot(x_line, slope * x_line + intercept,
-                 color=colors[taxon], linewidth=1.8,
+                 color=color_map[taxon], linewidth=1.8,
                  label=f"{taxon} (r={r:.2f}, p={p:.3f})")
 
 ax1.set_xlabel("Urban Score", fontsize=12)
 ax1.set_ylabel("Relative Abundance", fontsize=12)
-mode_str = f"combined {combine_method.lower()}" if combine_sites else "original sites"
 ax1.set_title(
-    f"Top {top_n} {tax_label.lower()}s vs. urban score  "
-    f"[{sample_type} | {mode_str}]",
+    f"Top {top_n} {tax_label.lower()}s vs. urban score  [{sample_type} | {mode_str}]",
     fontsize=13,
 )
 ax1.legend(bbox_to_anchor=(1.01, 1), loc="upper left", fontsize=8, framealpha=0.7)
@@ -252,18 +241,16 @@ if sample_type == "Both":
         agg_s = prepare_agg(df_s, tax_col, combine_sites, combine_method)
 
         top_s = (
-            agg_s.groupby(tax_col)["reads"]
-            .sum().nlargest(top_n).index.tolist()
+            agg_s.groupby(tax_col)["reads"].sum().nlargest(top_n).index.tolist()
         )
         agg_s_top = agg_s[agg_s[tax_col].isin(top_s)]
-
-        cmap_s = cm.get_cmap("tab20", len(top_s))
-        colors_s = {t: cmap_s(i) for i, t in enumerate(top_s)}
+        colors_s = get_colors(len(top_s))
+        color_map_s = dict(zip(top_s, colors_s))
 
         for taxon in top_s:
             sub = agg_s_top[agg_s_top[tax_col] == taxon].sort_values("urban_score")
             ax.scatter(sub["urban_score"], sub["rel_abund"],
-                       color=colors_s[taxon], alpha=0.5, s=40)
+                       color=color_map_s[taxon], alpha=0.5, s=40)
             if len(sub) >= 3:
                 slope, intercept, r, p, se = stats.linregress(
                     sub["urban_score"], sub["rel_abund"]
@@ -271,7 +258,7 @@ if sample_type == "Both":
                 x_line = np.linspace(sub["urban_score"].min(),
                                      sub["urban_score"].max(), 100)
                 ax.plot(x_line, slope * x_line + intercept,
-                        color=colors_s[taxon], linewidth=1.8,
+                        color=color_map_s[taxon], linewidth=1.8,
                         label=f"{taxon} (r={r:.2f}, p={p:.3f})")
 
         ax.set_title(f"{stype} samples", fontsize=13)
@@ -306,8 +293,8 @@ urban_vals    = pivot["urban_score"].values
 comm_matrix   = pivot.drop(columns=["urban_score"]).values
 
 n = len(sites_ordered)
-bc_matrix   = np.zeros((n, n))
-urban_dist  = np.zeros((n, n))
+bc_matrix  = np.zeros((n, n))
+urban_dist = np.zeros((n, n))
 for i in range(n):
     for j in range(n):
         if i != j:
@@ -348,11 +335,11 @@ with col2:
             bins=[0, 0.33, 0.66, 1.0],
             labels=["Low", "Medium", "High"],
         )
-        meta     = meta.dropna(subset=["urban_group"])
+        meta      = meta.dropna(subset=["urban_group"])
         valid_ids = meta.index.tolist()
-        dm_sub   = dm.filter(valid_ids)
-        result   = permanova(dm_sub, meta.loc[valid_ids], column="urban_group",
-                             permutations=999)
+        dm_sub    = dm.filter(valid_ids)
+        result    = permanova(dm_sub, meta.loc[valid_ids], column="urban_group",
+                              permutations=999)
         st.markdown(
             f"""
             PERMANOVA on Bray-Curtis dissimilarity,
@@ -403,13 +390,13 @@ comm_bar["Other"] = comm_sorted[
     [c for c in comm_sorted.columns if c not in top_bar]
 ].sum(axis=1)
 
-fig4, ax4 = plt.subplots(figsize=(12, 5))
-cmap4  = cm.get_cmap("tab20", len(comm_bar.columns))
-bottom = np.zeros(len(comm_bar))
+bar_colors = get_colors(len(comm_bar.columns))
+fig4, ax4  = plt.subplots(figsize=(12, 5))
+bottom     = np.zeros(len(comm_bar))
 
 for i, col in enumerate(comm_bar.columns):
     ax4.bar(range(len(comm_bar)), comm_bar[col].values,
-            bottom=bottom, color=cmap4(i), label=col, width=0.9)
+            bottom=bottom, color=bar_colors[i], label=col, width=0.9)
     bottom += comm_bar[col].values
 
 ax4.set_xticks(range(len(comm_bar)))

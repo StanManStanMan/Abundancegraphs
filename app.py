@@ -124,10 +124,26 @@ if combine_sites:
 else:
     combine_method = None
 
-# ═══════════════════════════════════════════════════════════════════════════
-# HELPER: strip trailing digits → base site label
-# ═══════════════════════════════════════════════════════════════════════════
+st.sidebar.markdown("---")
+st.sidebar.subheader("🚫 Control sites")
+
+# Detect all unique site base names and let user pick which to exclude
 df_raw["site_base"] = df_raw[SITE_COL].str.replace(r"\d+$", "", regex=True)
+all_site_bases = sorted(df_raw["site_base"].unique().tolist())
+
+exclude_controls = st.sidebar.multiselect(
+    "Exclude these sites (e.g. controls)",
+    options=all_site_bases,
+    default=[s for s in all_site_bases if "0D0" in s or "0A0" in s],
+    help="Select any site base labels to exclude from all analyses."
+)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EXCLUDE CONTROL SITES
+# ═══════════════════════════════════════════════════════════════════════════
+if exclude_controls:
+    df_raw = df_raw[~df_raw["site_base"].isin(exclude_controls)]
+    st.sidebar.caption(f"Excluding: {', '.join(exclude_controls)}")
 
 # ═══════════════════════════════════════════════════════════════════════════
 # DATA PREPARATION

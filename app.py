@@ -51,7 +51,15 @@ DATA_PATH = "blasted_with_sites.xlsx"
 
 @st.cache_data
 def load_data(path):
-    return pd.read_excel(path)
+    df = pd.read_excel(path)
+    # Pre-strip all taxonomic columns once at load time — avoids repeated
+    # .astype(str).str.strip() calls on every rerun
+    tax_cols = ["tax_kingdom", "tax_phylum", "tax_class", "tax_order",
+                "tax_family", "tax_genus", "blast_species"]
+    for col in tax_cols:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+    return df
 
 try:
     df_raw = load_data(DATA_PATH)
@@ -59,7 +67,8 @@ except FileNotFoundError:
     uploaded = st.file_uploader("Upload blasted_with_sites.xlsx", type="xlsx")
     if uploaded is None:
         st.stop()
-    df_raw = pd.read_excel(uploaded)
+    df_raw = load_data.__wrapped__(uploaded) if hasattr(load_data, "__wrapped__") \
+             else pd.read_excel(uploaded)
 
 # ── Remove control sites (0D0) ─────────────────────────────────────────────
 df_raw = df_raw[~df_raw["sites"].str.upper().str.startswith("0D0")]
@@ -124,25 +133,34 @@ filter_tax_label = st.sidebar.selectbox(
 )
 filter_tax_col = TAX_OPTIONS[filter_tax_label]
 
+# Columns are already stripped at load time — no repeated .str.strip() needed
 available_taxa = sorted(
-    df_raw[filter_tax_col].dropna().astype(str).str.strip().unique().tolist()
+    df_raw[filter_tax_col].dropna().unique().tolist()
 )
+
+# FIX: default=[] instead of default=available_taxa to avoid serialising the
+# full list on every rerun. Empty selection is treated as "include all".
 selected_taxa = st.sidebar.multiselect(
     f"Include only these {filter_tax_label.lower()}s",
     options=available_taxa,
-    default=available_taxa,
-    help="Deselect any group to exclude it from all analyses and plots.",
+    default=[],
+    help="Leave empty to include all. Select specific groups to restrict the analysis.",
 )
 
+# Apply filter only when the user has explicitly chosen a subset
 if selected_taxa:
-    df_raw = df_raw[df_raw[filter_tax_col].astype(str).str.strip().isin(selected_taxa)]
+    df_raw = df_raw[df_raw[filter_tax_col].isin(selected_taxa)]
+    filter_display = selected_taxa
 else:
-    st.warning("⚠️ No taxa selected — please select at least one group in the taxonomic filter.")
-    st.stop()
+    filter_display = ["(all)"]
 
 # ── Site grouping ───────────────────────────────────────────────────────────
 st.sidebar.markdown("---")
 st.sidebar.subheader("📍 Site grouping")
+
+# Compute site_base once here so it is available for the control-site widget
+df_raw = df_raw.copy()
+df_raw["site_base"] = df_raw[SITE_COL].str.replace(r"\d+$", "", regex=True)
 
 use_base = st.sidebar.radio(
     "Site labels",
@@ -164,7 +182,6 @@ else:
 st.sidebar.markdown("---")
 st.sidebar.subheader("🚫 Control sites")
 
-df_raw["site_base"] = df_raw[SITE_COL].str.replace(r"\d+$", "", regex=True)
 all_site_bases = sorted(df_raw["site_base"].unique().tolist())
 
 exclude_controls = st.sidebar.multiselect(
@@ -178,6 +195,11 @@ if exclude_controls:
     df_raw = df_raw[~df_raw["site_base"].isin(exclude_controls)]
     st.sidebar.caption(f"Excluding: {', '.join(exclude_controls)}")
 
+# Guard: ensure there is still data after filtering
+if df_raw.empty:
+    st.warning("⚠️ No data remaining after filters — please adjust your selections.")
+    st.stop()
+
 # ═══════════════════════════════════════════════════════════════════════════
 # DATA PREPARATION
 # ═══════════════════════════════════════════════════════════════════════════
@@ -187,11 +209,10 @@ def filter_sample_type(df, stype):
         return df[df[SITE_COL].str.contains("A|D")]
     return df[df[SITE_COL].str.contains(stype)]
 
-
 def prepare_agg(df_in, tax_col, combine_sites, combine_method):
     df = df_in.copy()
     df = df.dropna(subset=[URBAN_COL, tax_col])
-    df[tax_col] = df[tax_col].astype(str).str.strip()
+    # Columns already stripped at load time — no .str.strip() needed here
 
     group_col = "site_base" if combine_sites else SITE_COL
 
@@ -240,7 +261,6 @@ def prepare_agg(df_in, tax_col, combine_sites, combine_method):
 
     return agg
 
-
 # ── Apply filters ──────────────────────────────────────────────────────────
 df_filtered = filter_sample_type(df_raw, sample_type)
 if min_reads > 0:
@@ -255,7 +275,7 @@ mode_str = f"combined {combine_method.lower()}" if combine_sites else "original 
 with st.expander("🔎 Active filters", expanded=False):
     st.markdown(
         f"- **Taxonomic level displayed:** {tax_label}  \n"
-        f"- **Filter:** {filter_tax_label} ∈ {selected_taxa}  \n"
+        f"- **Filter:** {filter_tax_label} ∈ {filter_display}  \n"
         f"- **Sample type:** {sample_type}  \n"
         f"- **Site mode:** {mode_str}  \n"
         f"- **Min reads:** {min_reads}  \n"
@@ -494,3 +514,4 @@ with st.expander("📋 Show aggregated data table"):
         agg.sort_values("urban_score").reset_index(drop=True),
         use_container_width=True,
     )
+ 

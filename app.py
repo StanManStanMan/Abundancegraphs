@@ -7,8 +7,8 @@ Requires: pip install streamlit pandas matplotlib scipy scikit-bio openpyxl
 import streamlit as st
 import pandas as pd
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
-import matplotlib.colormaps as colormaps
 from scipy import stats
 from scipy.spatial.distance import braycurtis
 from scipy.stats import spearmanr
@@ -21,6 +21,14 @@ try:
     SKBIO_AVAILABLE = True
 except ImportError:
     SKBIO_AVAILABLE = False
+
+# ── Colour helper — works on all matplotlib versions ───────────────────────
+def get_colors(n):
+    try:
+        cmap = matplotlib.colormaps["tab20"]
+    except AttributeError:
+        cmap = matplotlib.cm.get_cmap("tab20")
+    return [cmap(i / max(n - 1, 1)) for i in range(n)]
 
 # ═══════════════════════════════════════════════════════════════════════════
 # PAGE CONFIG
@@ -60,11 +68,6 @@ TAX_OPTIONS = {
     "Phylum":   "tax_phylum",
     "Kingdom":  "tax_kingdom",
 }
-
-def get_colors(n):
-    """Return n distinct colours from tab20, safe for all matplotlib versions."""
-    cmap = colormaps["tab20"]
-    return [cmap(i / max(n - 1, 1)) for i in range(n)]
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SIDEBAR — CONTROLS
@@ -127,6 +130,7 @@ def filter_sample_type(df, stype):
         return df[df[SITE_COL].str.contains("A|D")]
     return df[df[SITE_COL].str.contains(stype)]
 
+
 def prepare_agg(df_in, tax_col, combine_sites, combine_method):
     df = df_in.copy()
     df = df.dropna(subset=[URBAN_COL, tax_col])
@@ -179,6 +183,7 @@ def prepare_agg(df_in, tax_col, combine_sites, combine_method):
 
     return agg
 
+
 # ── Apply filters ──────────────────────────────────────────────────────────
 df_filtered = filter_sample_type(df_raw, sample_type)
 if min_reads > 0:
@@ -194,11 +199,9 @@ mode_str = f"combined {combine_method.lower()}" if combine_sites else "original 
 # ═══════════════════════════════════════════════════════════════════════════
 st.header(f"1 · Top {top_n} {tax_label}s vs. Urban Score")
 
-top_taxa = (
-    agg.groupby(tax_col)["reads"].sum().nlargest(top_n).index.tolist()
-)
-agg_top = agg[agg[tax_col].isin(top_taxa)].copy()
-colors = get_colors(len(top_taxa))
+top_taxa  = agg.groupby(tax_col)["reads"].sum().nlargest(top_n).index.tolist()
+agg_top   = agg[agg[tax_col].isin(top_taxa)].copy()
+colors    = get_colors(len(top_taxa))
 color_map = dict(zip(top_taxa, colors))
 
 fig1, ax1 = plt.subplots(figsize=(10, 5))
@@ -240,11 +243,9 @@ if sample_type == "Both":
             df_s = df_s[df_s[READ_COL] >= min_reads]
         agg_s = prepare_agg(df_s, tax_col, combine_sites, combine_method)
 
-        top_s = (
-            agg_s.groupby(tax_col)["reads"].sum().nlargest(top_n).index.tolist()
-        )
-        agg_s_top = agg_s[agg_s[tax_col].isin(top_s)]
-        colors_s = get_colors(len(top_s))
+        top_s       = agg_s.groupby(tax_col)["reads"].sum().nlargest(top_n).index.tolist()
+        agg_s_top   = agg_s[agg_s[tax_col].isin(top_s)]
+        colors_s    = get_colors(len(top_s))
         color_map_s = dict(zip(top_s, colors_s))
 
         for taxon in top_s:
@@ -280,9 +281,8 @@ if sample_type == "Both":
 # ═══════════════════════════════════════════════════════════════════════════
 st.header("3 · Significance of Urbanisation on Community Composition")
 
-pivot = (
-    agg.pivot_table(index="site_id", columns=tax_col,
-                    values="rel_abund", fill_value=0)
+pivot = agg.pivot_table(
+    index="site_id", columns=tax_col, values="rel_abund", fill_value=0
 )
 site_urban_df = agg[["site_id", "urban_score"]].drop_duplicates().set_index("site_id")
 pivot = pivot.merge(site_urban_df, left_index=True, right_index=True)
@@ -292,7 +292,7 @@ sites_ordered = pivot.index.tolist()
 urban_vals    = pivot["urban_score"].values
 comm_matrix   = pivot.drop(columns=["urban_score"]).values
 
-n = len(sites_ordered)
+n          = len(sites_ordered)
 bc_matrix  = np.zeros((n, n))
 urban_dist = np.zeros((n, n))
 for i in range(n):
@@ -301,9 +301,9 @@ for i in range(n):
             bc_matrix[i, j]  = braycurtis(comm_matrix[i], comm_matrix[j])
             urban_dist[i, j] = abs(urban_vals[i] - urban_vals[j])
 
-triu_idx   = np.triu_indices(n, k=1)
-bc_flat    = bc_matrix[triu_idx]
-urban_flat = urban_dist[triu_idx]
+triu_idx      = np.triu_indices(n, k=1)
+bc_flat       = bc_matrix[triu_idx]
+urban_flat    = urban_dist[triu_idx]
 rho, p_mantel = spearmanr(urban_flat, bc_flat)
 
 col1, col2 = st.columns(2)
